@@ -2,8 +2,19 @@
 <html lang="id">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Absensi Tukang - Gaji Mingguan (Minggu-Minggu)</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=yes, viewport-fit=cover">
+    
+    <!-- PWA Meta -->
+    <meta name="theme-color" content="#0f3b2c">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="Absensi Tukang">
+    
+    <title>🧑‍🏗️ Absensi & Gaji Tukang (PWA)</title>
+    
+    <!-- Manifest akan diinjeksi via blob -->
+    <link rel="manifest" id="manifest-link">
+
     <style>
         * { box-sizing: border-box; font-family: system-ui, 'Segoe UI', sans-serif; }
         body { background: #f0f4f8; margin: 0; padding: 20px; }
@@ -27,12 +38,18 @@
         .toast { position: fixed; bottom: 20px; right: 20px; background: #1e293b; color: white; padding: 12px 24px; border-radius: 40px; opacity: 0; transition: 0.2s; z-index: 1000; }
         .btn-group { display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
         .btn-group button { flex: 1; }
+        .install-btn { background: #0f3b2c; color: white; border: none; padding: 10px 20px; border-radius: 40px; font-weight: bold; margin-left: 15px; cursor: pointer; display: none; }
+        .install-btn.show { display: inline-block; }
+        .header-top { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; }
     </style>
 </head>
 <body>
 <div class="container">
     <div class="header">
-        <h1>🧑‍🏗️ Absensi & Gaji Tukang</h1>
+        <div class="header-top">
+            <h1 style="margin:0;">🧑‍🏗️ Absensi & Gaji Tukang</h1>
+            <button id="installButton" class="install-btn">📲 Install Aplikasi</button>
+        </div>
         <p>By. Aziz Fathunaim</p>
         <p>https://script.google.com/macros/s/<br>AKfycbwrgDBSQp1LJIzkPv8Je4fqOIq1r7hiAuzuW<br>RPb8JlVQjwgf5WPyULgjaltE1Iw68Yqdw/exec</p>
     </div>
@@ -62,7 +79,7 @@
                 </table>
             </div>
             <div class="btn-group">
-                <button id="simpanAbsensi">💾 Simpan Absensi </button>
+                <button id="simpanAbsensi">💾 Simpan Absensi</button>
             </div>
             <div class="rekap">
                 <h3>📋 Rekapitulasi</h3>
@@ -82,308 +99,431 @@
 <div id="toast" class="toast">✔️ Tersimpan</div>
 
 <script>
-    // ========== DATA STORAGE ==========
-    let workers = [];
-    let attendanceDB = {};
-    let currentWeekStart = "";
-    let currentAttendance = {};
-    let apiEndpoint = localStorage.getItem("apiUrl") || "";
+    (function(){
+        "use strict";
 
-    function formatYMD(d) { 
-        let date = new Date(d); 
-        return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`; 
-    }
-    
-    function getStartOfWeek(date) {
-        let d = new Date(date);
-        const day = d.getDay(); // 0 = Minggu
-        d.setDate(d.getDate() - day);
-        return formatYMD(d);
-    }
-    
-    function getWeekDates(weekStart) {
-        let dates = [];
-        let start = new Date(weekStart);
-        for (let i = 0; i < 7; i++) {
-            let d = new Date(start);
-            d.setDate(start.getDate() + i);
-            dates.push(formatYMD(d));
+        // ========== PWA SETUP ==========
+        let deferredPrompt;
+        const installBtn = document.getElementById('installButton');
+
+        // Generate ikon dinamis (canvas)
+        function generateIconBase64(size, text = '👷', bgColor = '#0f3b2c') {
+            const canvas = document.createElement('canvas');
+            canvas.width = size;
+            canvas.height = size;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = bgColor;
+            ctx.fillRect(0, 0, size, size);
+            ctx.font = `bold ${size * 0.5}px system-ui, 'Segoe UI', sans-serif`;
+            ctx.fillStyle = '#ffffff';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(text, size/2, size/2);
+            return canvas.toDataURL('image/png');
         }
-        return dates;
-    }
-    
-    function formatRange(ws) {
-        let dates = getWeekDates(ws);
-        let s = new Date(dates[0]);
-        let e = new Date(dates[6]);
-        return `${s.toLocaleDateString('id-ID', { weekday:'long', day:'numeric', month:'short', year:'numeric' })} - ${e.toLocaleDateString('id-ID', { weekday:'long', day:'numeric', month:'short', year:'numeric' })}`;
-    }
-    
-    function numberFormat(n) { return new Intl.NumberFormat('id-ID').format(n); }
-    function showToast(msg) { let t = document.getElementById("toast"); t.innerText = msg; t.style.opacity = 1; setTimeout(() => t.style.opacity = 0, 2000); }
 
-    function loadWorkers() { 
-        let w = localStorage.getItem("workers"); 
-        if(w) workers = JSON.parse(w); 
-        else workers = [{id:"w1", name:"Slamet", position:"Tukang Kayu", dailyWage:150000}]; 
-    }
-    function saveWorkers() { localStorage.setItem("workers", JSON.stringify(workers)); }
-    function loadAttendance() { 
-        let a = localStorage.getItem("attendance"); 
-        if(a) attendanceDB = JSON.parse(a); 
-        else attendanceDB = {}; 
-    }
-    function saveAttendance() { localStorage.setItem("attendance", JSON.stringify(attendanceDB)); }
-    
-    function syncCurrentWeek() {
-        if (!currentWeekStart) return;
-        let dates = getWeekDates(currentWeekStart);
-        let newAtt = { ...currentAttendance };
-        workers.forEach(w => {
-            if (!newAtt[w.id]) newAtt[w.id] = {};
-            dates.forEach(d => {
-                if (typeof newAtt[w.id][d] !== 'boolean') newAtt[w.id][d] = false;
-            });
-            Object.keys(newAtt[w.id]).forEach(date => {
-                if (!dates.includes(date)) delete newAtt[w.id][date];
-            });
+        const icon192 = generateIconBase64(192, '🧑‍🏗️', '#0f3b2c');
+        const icon512 = generateIconBase64(512, 'ABS', '#0f3b2c');
+
+        const manifestData = {
+            name: "Absensi & Gaji Tukang",
+            short_name: "Absensi",
+            description: "Catat absensi dan hitung gaji mingguan tukang",
+            theme_color: "#0f3b2c",
+            background_color: "#f0f4f8",
+            display: "standalone",
+            scope: "./",
+            start_url: "./",
+            orientation: "portrait",
+            icons: [
+                { src: icon192, sizes: "192x192", type: "image/png", purpose: "any maskable" },
+                { src: icon512, sizes: "512x512", type: "image/png", purpose: "any maskable" }
+            ]
+        };
+
+        const manifestBlob = new Blob([JSON.stringify(manifestData)], { type: 'application/manifest+json' });
+        const manifestURL = URL.createObjectURL(manifestBlob);
+        document.getElementById('manifest-link').href = manifestURL;
+
+        // Service Worker
+        if ('serviceWorker' in navigator) {
+            const swCode = `
+                const CACHE_NAME = 'absensi-v2';
+                const urlsToCache = [
+                    './',
+                    // Tambahkan resource penting (opsional, karena kita inline)
+                ];
+
+                self.addEventListener('install', event => {
+                    event.waitUntil(
+                        caches.open(CACHE_NAME)
+                            .then(cache => cache.addAll(urlsToCache))
+                            .then(() => self.skipWaiting())
+                    );
+                });
+
+                self.addEventListener('activate', event => {
+                    event.waitUntil(
+                        caches.keys().then(cacheNames => {
+                            return Promise.all(
+                                cacheNames.filter(name => name !== CACHE_NAME).map(name => caches.delete(name))
+                            );
+                        }).then(() => self.clients.claim())
+                    );
+                });
+
+                self.addEventListener('fetch', event => {
+                    if (event.request.method !== 'GET') return;
+                    if (event.request.url.startsWith('chrome-extension://') || event.request.url.startsWith('blob:')) return;
+                    
+                    event.respondWith(
+                        caches.match(event.request).then(response => {
+                            return response || fetch(event.request).then(fetchResponse => {
+                                if (event.request.url.includes(self.location.origin) || 
+                                    event.request.url.includes('cdn') || 
+                                    event.request.url.includes('fonts')) {
+                                    const responseClone = fetchResponse.clone();
+                                    caches.open(CACHE_NAME).then(cache => cache.put(event.request, responseClone));
+                                }
+                                return fetchResponse;
+                            }).catch(() => {
+                                if (event.request.mode === 'navigate') {
+                                    return caches.match('./');
+                                }
+                                return new Response('Offline', { status: 503 });
+                            });
+                        })
+                    );
+                });
+            `;
+
+            const swBlob = new Blob([swCode], { type: 'application/javascript' });
+            const swURL = URL.createObjectURL(swBlob);
+            navigator.serviceWorker.register(swURL)
+                .then(reg => console.log('SW registered', reg))
+                .catch(err => console.warn('SW failed', err));
+        }
+
+        // Install prompt
+        window.addEventListener('beforeinstallprompt', (e) => {
+            e.preventDefault();
+            deferredPrompt = e;
+            installBtn.classList.add('show');
         });
-        Object.keys(newAtt).forEach(wid => {
-            if (!workers.some(w => w.id === wid)) delete newAtt[wid];
+
+        installBtn.addEventListener('click', async () => {
+            if (!deferredPrompt) return;
+            deferredPrompt.prompt();
+            const { outcome } = await deferredPrompt.userChoice;
+            if (outcome === 'accepted') installBtn.classList.remove('show');
+            deferredPrompt = null;
         });
-        currentAttendance = newAtt;
-    }
 
-    function loadCurrentWeekAttendance() {
-        if (!currentWeekStart) return;
-        let saved = attendanceDB[currentWeekStart] || {};
-        currentAttendance = saved;
-        syncCurrentWeek();
-    }
-
-    function saveCurrentWeek() {
-        if (!currentWeekStart) return;
-        let toSave = {};
-        workers.forEach(w => {
-            if (currentAttendance[w.id]) toSave[w.id] = { ...currentAttendance[w.id] };
+        window.addEventListener('appinstalled', () => {
+            installBtn.classList.remove('show');
+            deferredPrompt = null;
         });
-        attendanceDB[currentWeekStart] = toSave;
-        saveAttendance();
-        showToast("Absensi minggu ini tersimpan di browser");
-    }
 
-    function setWeek(weekStart) {
-        currentWeekStart = weekStart;
-        loadCurrentWeekAttendance();
-        renderTable();
-        renderRekap();
-        document.getElementById("weekRange").innerText = formatRange(currentWeekStart);
-    }
+        // ========== DATA STORAGE & APLIKASI UTAMA ==========
+        let workers = [];
+        let attendanceDB = {};
+        let currentWeekStart = "";
+        let currentAttendance = {};
+        let apiEndpoint = localStorage.getItem("apiUrl") || "";
 
-    function renderTable() {
-        if (!currentWeekStart) return;
-        let dates = getWeekDates(currentWeekStart);
-        let thead = `<tr><th>Nama / Jabatan</th>` + 
-            dates.map(d => `<th>${new Date(d).toLocaleDateString('id-ID', { weekday:'short', day:'numeric' })}</th>`).join('') + 
-            `</tr>`;
-        document.getElementById("theadAbsensi").innerHTML = thead;
-        
-        if (workers.length === 0) {
-            document.getElementById("tbodyAbsensi").innerHTML = `<tr><td colspan="8">Belum ada tukang</td></tr>`;
-            return;
+        function formatYMD(d) { 
+            let date = new Date(d); 
+            return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`; 
         }
         
-        let tbody = "";
-        workers.forEach(w => {
-            let att = currentAttendance[w.id] || {};
-            tbody += `<tr>
-                <td style="text-align:left"><b>${w.name}</b><br><small>${w.position}<br>Rp ${numberFormat(w.dailyWage)}/hari</small></td>`;
-            dates.forEach(d => {
-                let checked = att[d] === true;
-                tbody += `<td><input type="checkbox" class="absensi-cb" data-wid="${w.id}" data-date="${d}" ${checked ? "checked" : ""}></td>`;
-            });
-            tbody += `</tr>`;
-        });
-        document.getElementById("tbodyAbsensi").innerHTML = tbody;
+        function getStartOfWeek(date) {
+            let d = new Date(date);
+            const day = d.getDay(); // 0 = Minggu
+            d.setDate(d.getDate() - day);
+            return formatYMD(d);
+        }
         
-        document.querySelectorAll(".absensi-cb").forEach(cb => {
-            cb.addEventListener("change", () => {
-                let wid = cb.dataset.wid;
-                let date = cb.dataset.date;
-                if (!currentAttendance[wid]) currentAttendance[wid] = {};
-                currentAttendance[wid][date] = cb.checked;
-                renderRekap();
+        function getWeekDates(weekStart) {
+            let dates = [];
+            let start = new Date(weekStart);
+            for (let i = 0; i < 7; i++) {
+                let d = new Date(start);
+                d.setDate(start.getDate() + i);
+                dates.push(formatYMD(d));
+            }
+            return dates;
+        }
+        
+        function formatRange(ws) {
+            let dates = getWeekDates(ws);
+            let s = new Date(dates[0]);
+            let e = new Date(dates[6]);
+            return `${s.toLocaleDateString('id-ID', { weekday:'long', day:'numeric', month:'short', year:'numeric' })} - ${e.toLocaleDateString('id-ID', { weekday:'long', day:'numeric', month:'short', year:'numeric' })}`;
+        }
+        
+        function numberFormat(n) { return new Intl.NumberFormat('id-ID').format(n); }
+        function showToast(msg) { let t = document.getElementById("toast"); t.innerText = msg; t.style.opacity = 1; setTimeout(() => t.style.opacity = 0, 2000); }
+
+        function loadWorkers() { 
+            let w = localStorage.getItem("workers"); 
+            if(w) workers = JSON.parse(w); 
+            else workers = [{id:"w1", name:"Slamet", position:"Tukang Kayu", dailyWage:150000}]; 
+        }
+        function saveWorkers() { localStorage.setItem("workers", JSON.stringify(workers)); }
+        function loadAttendance() { 
+            let a = localStorage.getItem("attendance"); 
+            if(a) attendanceDB = JSON.parse(a); 
+            else attendanceDB = {}; 
+        }
+        function saveAttendance() { localStorage.setItem("attendance", JSON.stringify(attendanceDB)); }
+        
+        function syncCurrentWeek() {
+            if (!currentWeekStart) return;
+            let dates = getWeekDates(currentWeekStart);
+            let newAtt = { ...currentAttendance };
+            workers.forEach(w => {
+                if (!newAtt[w.id]) newAtt[w.id] = {};
+                dates.forEach(d => {
+                    if (typeof newAtt[w.id][d] !== 'boolean') newAtt[w.id][d] = false;
+                });
+                Object.keys(newAtt[w.id]).forEach(date => {
+                    if (!dates.includes(date)) delete newAtt[w.id][date];
+                });
             });
-        });
-    }
-
-    function renderRekap() {
-        if (!currentWeekStart || workers.length === 0) return;
-        let dates = getWeekDates(currentWeekStart);
-        let totalSemua = 0;
-        let html = "";
-        workers.forEach(w => {
-            let hadir = dates.filter(d => currentAttendance[w.id]?.[d] === true).length;
-            let gaji = hadir * w.dailyWage;
-            totalSemua += gaji;
-            html += `<tr><td style="text-align:left">${w.name}</td><td>${hadir} hari</td><td>Rp ${numberFormat(gaji)}</td></tr>`;
-        });
-        document.getElementById("rekapBody").innerHTML = html;
-        document.getElementById("totalGaji").innerHTML = `💰 Total: Rp ${numberFormat(totalSemua)}`;
-    }
-
-    function renderWorkerList() {
-        let container = document.getElementById("listTukang");
-        if (workers.length === 0) { container.innerHTML = "<div>Belum ada tukang</div>"; return; }
-        let html = "";
-        workers.forEach(w => {
-            html += `<div class="worker-item">
-                <div><b>${w.name}</b><br><small>${w.position} - Rp ${numberFormat(w.dailyWage)}</small></div>
-                <button class="hapusTukang" data-id="${w.id}" style="background:#b91c1c; width:auto; padding:6px 12px;">Hapus</button>
-            </div>`;
-        });
-        container.innerHTML = html;
-        document.querySelectorAll(".hapusTukang").forEach(btn => {
-            btn.addEventListener("click", () => {
-                let id = btn.dataset.id;
-                if (confirm("Hapus tukang? Semua data absensi akan hilang.")) {
-                    workers = workers.filter(w => w.id !== id);
-                    saveWorkers();
-                    for (let wk in attendanceDB) delete attendanceDB[wk][id];
-                    saveAttendance();
-                    loadCurrentWeekAttendance();
-                    syncCurrentWeek();
-                    renderWorkerList();
-                    renderTable();
-                    renderRekap();
-                    showToast("Tukang dihapus");
-                }
+            Object.keys(newAtt).forEach(wid => {
+                if (!workers.some(w => w.id === wid)) delete newAtt[wid];
             });
-        });
-    }
+            currentAttendance = newAtt;
+        }
 
-    function addWorker(name, pos, wage) {
-        if (!name.trim()) { alert("Nama harus diisi"); return false; }
-        if (!pos.trim()) { alert("Jabatan harus diisi"); return false; }
-        let w = Number(wage);
-        if (isNaN(w) || w <= 0) { alert("Upah harus angka positif"); return false; }
-        let newId = "w" + Date.now() + "-" + Math.random().toString(36).substr(2, 5);
-        workers.push({ id: newId, name: name.trim(), position: pos.trim(), dailyWage: w });
-        saveWorkers();
-        renderWorkerList();
-        if (currentWeekStart) {
-            loadCurrentWeekAttendance();
+        function loadCurrentWeekAttendance() {
+            if (!currentWeekStart) return;
+            let saved = attendanceDB[currentWeekStart] || {};
+            currentAttendance = saved;
             syncCurrentWeek();
+        }
+
+        function saveCurrentWeek() {
+            if (!currentWeekStart) return;
+            let toSave = {};
+            workers.forEach(w => {
+                if (currentAttendance[w.id]) toSave[w.id] = { ...currentAttendance[w.id] };
+            });
+            attendanceDB[currentWeekStart] = toSave;
+            saveAttendance();
+            showToast("Absensi minggu ini tersimpan di browser");
+        }
+
+        function setWeek(weekStart) {
+            currentWeekStart = weekStart;
+            loadCurrentWeekAttendance();
             renderTable();
             renderRekap();
+            document.getElementById("weekRange").innerText = formatRange(currentWeekStart);
         }
-        showToast("Tukang ditambahkan");
-        return true;
-    }
 
-    // ========== KIRIM REKAP PER TUKANG PER MINGGU (DENGAN KOLOM PER HARI) ==========
-    async function kirimKeSpreadsheet() {
-        if (!apiEndpoint) { alert("Simpan URL Web App terlebih dahulu."); return; }
-        if (!currentWeekStart || workers.length === 0) { alert("Tidak ada data."); return; }
-        
-        let dates = getWeekDates(currentWeekStart); // [Minggu, Senin, Selasa, Rabu, Kamis, Jumat, Sabtu]
-        let namaHari = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
-        let statusDiv = document.getElementById("statusApi");
-        statusDiv.innerHTML = "Mengirim rekap per tukang...";
-        let berhasil = 0;
-        let gagal = 0;
-        const timestamp = new Date().toISOString();
-        const tanggalExport = new Date().toLocaleDateString('id-ID');
-        
-        for (let w of workers) {
-            // Siapkan status hadir untuk masing-masing hari
-            let statusHari = [];
-            let jumlahHadir = 0;
-            for (let i = 0; i < dates.length; i++) {
-                let hadir = currentAttendance[w.id]?.[dates[i]] === true;
-                statusHari.push(hadir ? "Hadir" : "Tidak");
-                if (hadir) jumlahHadir++;
+        function renderTable() {
+            if (!currentWeekStart) return;
+            let dates = getWeekDates(currentWeekStart);
+            let thead = `<tr><th>Nama / Jabatan</th>` + 
+                dates.map(d => `<th>${new Date(d).toLocaleDateString('id-ID', { weekday:'short', day:'numeric' })}</th>`).join('') + 
+                `</tr>`;
+            document.getElementById("theadAbsensi").innerHTML = thead;
+            
+            if (workers.length === 0) {
+                document.getElementById("tbodyAbsensi").innerHTML = `<tr><td colspan="8">Belum ada tukang</td></tr>`;
+                return;
             }
-            const totalUpah = jumlahHadir * w.dailyWage;
             
-            const payload = {
-                timestamp: timestamp,
-                tanggalExport: tanggalExport,
-                namaTukang: w.name,
-                jabatan: w.position,
-                minggu: statusHari[0],   // Hari Minggu
-                senin: statusHari[1],
-                selasa: statusHari[2],
-                rabu: statusHari[3],
-                kamis: statusHari[4],
-                jumat: statusHari[5],
-                sabtu: statusHari[6],
-                jumlahAbsen: jumlahHadir,
-                upahPerHari: w.dailyWage,
-                totalUpah: totalUpah,
-                mingguMulai: currentWeekStart
-            };
-            
-            try {
-                await fetch(apiEndpoint, {
-                    method: "POST",
-                    mode: "no-cors",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify(payload)
+            let tbody = "";
+            workers.forEach(w => {
+                let att = currentAttendance[w.id] || {};
+                tbody += `<tr>
+                    <td style="text-align:left"><b>${w.name}</b><br><small>${w.position}<br>Rp ${numberFormat(w.dailyWage)}/hari</small></td>`;
+                dates.forEach(d => {
+                    let checked = att[d] === true;
+                    tbody += `<td><input type="checkbox" class="absensi-cb" data-wid="${w.id}" data-date="${d}" ${checked ? "checked" : ""}></td>`;
                 });
-                berhasil++;
-            } catch(e) {
-                console.error(e);
-                gagal++;
-            }
+                tbody += `</tr>`;
+            });
+            document.getElementById("tbodyAbsensi").innerHTML = tbody;
+            
+            document.querySelectorAll(".absensi-cb").forEach(cb => {
+                cb.addEventListener("change", () => {
+                    let wid = cb.dataset.wid;
+                    let date = cb.dataset.date;
+                    if (!currentAttendance[wid]) currentAttendance[wid] = {};
+                    currentAttendance[wid][date] = cb.checked;
+                    renderRekap();
+                });
+            });
         }
-        
-        statusDiv.innerHTML = `✅ ${berhasil} data tukang berhasil dikirim, ❌ ${gagal} gagal. Cek spreadsheet.`;
-        if (berhasil > 0) showToast("Rekap per tukang dikirim ke spreadsheet");
-    }
 
-    // Inisialisasi
-    function init() {
-        loadWorkers();
-        loadAttendance();
-        let todayStart = getStartOfWeek(new Date());
-        setWeek(todayStart);
-        renderWorkerList();
-        
-        document.getElementById("btnTambah").onclick = () => {
-            let n = document.getElementById("nama").value;
-            let p = document.getElementById("jabatan").value;
-            let u = document.getElementById("upah").value;
-            if (addWorker(n, p, u)) {
-                document.getElementById("nama").value = "";
-                document.getElementById("jabatan").value = "";
-                document.getElementById("upah").value = "";
+        function renderRekap() {
+            if (!currentWeekStart || workers.length === 0) return;
+            let dates = getWeekDates(currentWeekStart);
+            let totalSemua = 0;
+            let html = "";
+            workers.forEach(w => {
+                let hadir = dates.filter(d => currentAttendance[w.id]?.[d] === true).length;
+                let gaji = hadir * w.dailyWage;
+                totalSemua += gaji;
+                html += `<tr><td style="text-align:left">${w.name}</td><td>${hadir} hari</td><td>Rp ${numberFormat(gaji)}</td></tr>`;
+            });
+            document.getElementById("rekapBody").innerHTML = html;
+            document.getElementById("totalGaji").innerHTML = `💰 Total: Rp ${numberFormat(totalSemua)}`;
+        }
+
+        function renderWorkerList() {
+            let container = document.getElementById("listTukang");
+            if (workers.length === 0) { container.innerHTML = "<div>Belum ada tukang</div>"; return; }
+            let html = "";
+            workers.forEach(w => {
+                html += `<div class="worker-item">
+                    <div><b>${w.name}</b><br><small>${w.position} - Rp ${numberFormat(w.dailyWage)}</small></div>
+                    <button class="hapusTukang" data-id="${w.id}" style="background:#b91c1c; width:auto; padding:6px 12px;">Hapus</button>
+                </div>`;
+            });
+            container.innerHTML = html;
+            document.querySelectorAll(".hapusTukang").forEach(btn => {
+                btn.addEventListener("click", () => {
+                    let id = btn.dataset.id;
+                    if (confirm("Hapus tukang? Semua data absensi akan hilang.")) {
+                        workers = workers.filter(w => w.id !== id);
+                        saveWorkers();
+                        for (let wk in attendanceDB) delete attendanceDB[wk][id];
+                        saveAttendance();
+                        loadCurrentWeekAttendance();
+                        syncCurrentWeek();
+                        renderWorkerList();
+                        renderTable();
+                        renderRekap();
+                        showToast("Tukang dihapus");
+                    }
+                });
+            });
+        }
+
+        function addWorker(name, pos, wage) {
+            if (!name.trim()) { alert("Nama harus diisi"); return false; }
+            if (!pos.trim()) { alert("Jabatan harus diisi"); return false; }
+            let w = Number(wage);
+            if (isNaN(w) || w <= 0) { alert("Upah harus angka positif"); return false; }
+            let newId = "w" + Date.now() + "-" + Math.random().toString(36).substr(2, 5);
+            workers.push({ id: newId, name: name.trim(), position: pos.trim(), dailyWage: w });
+            saveWorkers();
+            renderWorkerList();
+            if (currentWeekStart) {
+                loadCurrentWeekAttendance();
+                syncCurrentWeek();
+                renderTable();
+                renderRekap();
             }
-        };
-        document.getElementById("simpanAbsensi").onclick = () => saveCurrentWeek();
-        document.getElementById("prevWeek").onclick = () => {
-            let d = new Date(currentWeekStart);
-            d.setDate(d.getDate() - 7);
-            setWeek(getStartOfWeek(d));
-        };
-        document.getElementById("nextWeek").onclick = () => {
-            let d = new Date(currentWeekStart);
-            d.setDate(d.getDate() + 7);
-            setWeek(getStartOfWeek(d));
-        };
-        document.getElementById("todayWeek").onclick = () => setWeek(getStartOfWeek(new Date()));
-        document.getElementById("simpanUrl").onclick = () => {
-            let url = document.getElementById("apiUrl").value.trim();
-            if (url) {
-                localStorage.setItem("apiUrl", url);
-                apiEndpoint = url;
-                showToast("URL disimpan");
+            showToast("Tukang ditambahkan");
+            return true;
+        }
+
+        async function kirimKeSpreadsheet() {
+            if (!apiEndpoint) { alert("Simpan URL Web App terlebih dahulu."); return; }
+            if (!currentWeekStart || workers.length === 0) { alert("Tidak ada data."); return; }
+            
+            let dates = getWeekDates(currentWeekStart);
+            let namaHari = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
+            let statusDiv = document.getElementById("statusApi");
+            statusDiv.innerHTML = "Mengirim rekap per tukang...";
+            let berhasil = 0;
+            let gagal = 0;
+            const timestamp = new Date().toISOString();
+            const tanggalExport = new Date().toLocaleDateString('id-ID');
+            
+            for (let w of workers) {
+                let statusHari = [];
+                let jumlahHadir = 0;
+                for (let i = 0; i < dates.length; i++) {
+                    let hadir = currentAttendance[w.id]?.[dates[i]] === true;
+                    statusHari.push(hadir ? "Hadir" : "Tidak");
+                    if (hadir) jumlahHadir++;
+                }
+                const totalUpah = jumlahHadir * w.dailyWage;
+                
+                const payload = {
+                    timestamp: timestamp,
+                    tanggalExport: tanggalExport,
+                    namaTukang: w.name,
+                    jabatan: w.position,
+                    minggu: statusHari[0],
+                    senin: statusHari[1],
+                    selasa: statusHari[2],
+                    rabu: statusHari[3],
+                    kamis: statusHari[4],
+                    jumat: statusHari[5],
+                    sabtu: statusHari[6],
+                    jumlahAbsen: jumlahHadir,
+                    upahPerHari: w.dailyWage,
+                    totalUpah: totalUpah,
+                    mingguMulai: currentWeekStart
+                };
+                
+                try {
+                    await fetch(apiEndpoint, {
+                        method: "POST",
+                        mode: "no-cors",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify(payload)
+                    });
+                    berhasil++;
+                } catch(e) {
+                    console.error(e);
+                    gagal++;
+                }
             }
-        };
-        document.getElementById("kirimSpreadsheet").onclick = kirimKeSpreadsheet;
-        document.getElementById("apiUrl").value = apiEndpoint;
-    }
-    init();
+            
+            statusDiv.innerHTML = `✅ ${berhasil} data tukang berhasil dikirim, ❌ ${gagal} gagal. Cek spreadsheet.`;
+            if (berhasil > 0) showToast("Rekap per tukang dikirim ke spreadsheet");
+        }
+
+        function init() {
+            loadWorkers();
+            loadAttendance();
+            let todayStart = getStartOfWeek(new Date());
+            setWeek(todayStart);
+            renderWorkerList();
+            
+            document.getElementById("btnTambah").onclick = () => {
+                let n = document.getElementById("nama").value;
+                let p = document.getElementById("jabatan").value;
+                let u = document.getElementById("upah").value;
+                if (addWorker(n, p, u)) {
+                    document.getElementById("nama").value = "";
+                    document.getElementById("jabatan").value = "";
+                    document.getElementById("upah").value = "";
+                }
+            };
+            document.getElementById("simpanAbsensi").onclick = () => saveCurrentWeek();
+            document.getElementById("prevWeek").onclick = () => {
+                let d = new Date(currentWeekStart);
+                d.setDate(d.getDate() - 7);
+                setWeek(getStartOfWeek(d));
+            };
+            document.getElementById("nextWeek").onclick = () => {
+                let d = new Date(currentWeekStart);
+                d.setDate(d.getDate() + 7);
+                setWeek(getStartOfWeek(d));
+            };
+            document.getElementById("todayWeek").onclick = () => setWeek(getStartOfWeek(new Date()));
+            document.getElementById("simpanUrl").onclick = () => {
+                let url = document.getElementById("apiUrl").value.trim();
+                if (url) {
+                    localStorage.setItem("apiUrl", url);
+                    apiEndpoint = url;
+                    showToast("URL disimpan");
+                }
+            };
+            document.getElementById("kirimSpreadsheet").onclick = kirimKeSpreadsheet;
+            document.getElementById("apiUrl").value = apiEndpoint;
+        }
+        init();
+    })();
 </script>
 </body>
 </html>
